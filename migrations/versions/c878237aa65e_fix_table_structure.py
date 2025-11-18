@@ -1,8 +1,8 @@
-"""empty message
+"""Fix table structure
 
-Revision ID: 4605fa1cbe47
-Revises: 0763d677d453
-Create Date: 2025-11-16 15:09:18.218494
+Revision ID: c878237aa65e
+Revises: 
+Create Date: 2025-11-18 17:40:26.827531
 
 """
 from alembic import op
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '4605fa1cbe47'
-down_revision = '0763d677d453'
+revision = 'c878237aa65e'
+down_revision = None
 branch_labels = None
 depends_on = None
 
@@ -50,19 +50,30 @@ def upgrade():
     sa.Column('image_url', sa.String(length=500), nullable=True),
     sa.Column('amenities', sa.JSON(), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=False),
+    sa.Column('check_in_time', sa.Time(), nullable=False),
+    sa.Column('check_out_time', sa.Time(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('users',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('email', sa.String(length=120), nullable=False),
-    sa.Column('password', sa.String(length=255), nullable=False),
+    sa.Column('password', sa.String(length=255), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('role', sa.Enum('USER', 'ADMIN', name='userrole'), nullable=False),
     sa.Column('name', sa.String(length=100), nullable=True),
     sa.Column('phone', sa.String(length=20), nullable=True),
+    sa.Column('email_verified', sa.Boolean(), nullable=False),
+    sa.Column('verification_token', sa.String(length=100), nullable=True),
+    sa.Column('verification_token_expires', sa.DateTime(), nullable=True),
+    sa.Column('password_reset_token', sa.String(length=100), nullable=True),
+    sa.Column('password_reset_expires', sa.DateTime(), nullable=True),
+    sa.Column('is_guest', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.PrimaryKeyConstraint('id')
+    sa.Column('last_login', sa.DateTime(), nullable=True),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('password_reset_token'),
+    sa.UniqueConstraint('verification_token')
     )
     with op.batch_alter_table('users', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_users_email'), ['email'], unique=True)
@@ -117,13 +128,17 @@ def upgrade():
     op.create_table('bookings',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('confirmation_number', sa.String(length=20), nullable=False),
     sa.Column('experience_id', sa.Integer(), nullable=True),
     sa.Column('package_id', sa.Integer(), nullable=True),
     sa.Column('experience_date', sa.Date(), nullable=True),
+    sa.Column('experience_time', sa.Time(), nullable=True),
     sa.Column('check_in', sa.Date(), nullable=True),
     sa.Column('check_out', sa.Date(), nullable=True),
+    sa.Column('check_in_time', sa.Time(), nullable=True),
+    sa.Column('check_out_time', sa.Time(), nullable=True),
     sa.Column('number_of_guests', sa.Integer(), nullable=False),
-    sa.Column('status', sa.Enum('PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED', name='bookingstatus'), nullable=False),
+    sa.Column('status', sa.Enum('CART', 'PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED', name='bookingstatus'), nullable=False),
     sa.Column('total_price', sa.Float(), nullable=False),
     sa.Column('stripe_payment_intent_id', sa.String(length=200), nullable=True),
     sa.Column('stripe_payment_status', sa.String(length=50), nullable=True),
@@ -132,11 +147,15 @@ def upgrade():
     sa.Column('admin_notes', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('cart_expires_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['experience_id'], ['experiences.id'], ),
     sa.ForeignKeyConstraint(['package_id'], ['packages.id'], ),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
+    with op.batch_alter_table('bookings', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_bookings_confirmation_number'), ['confirmation_number'], unique=True)
+
     op.create_table('package_extras',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('package_id', sa.Integer(), nullable=False),
@@ -156,6 +175,28 @@ def upgrade():
     sa.ForeignKeyConstraint(['extra_id'], ['extras.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_table('booking_items',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('booking_id', sa.Integer(), nullable=False),
+    sa.Column('item_type', sa.String(length=50), nullable=False),
+    sa.Column('experience_id', sa.Integer(), nullable=True),
+    sa.Column('room_id', sa.Integer(), nullable=True),
+    sa.Column('name', sa.String(length=200), nullable=False),
+    sa.Column('image_url', sa.String(length=500), nullable=True),
+    sa.Column('date', sa.Date(), nullable=True),
+    sa.Column('guests', sa.Integer(), nullable=True),
+    sa.Column('check_in', sa.Date(), nullable=True),
+    sa.Column('check_out', sa.Date(), nullable=True),
+    sa.Column('nights', sa.Integer(), nullable=True),
+    sa.Column('unit_price', sa.Float(), nullable=False),
+    sa.Column('subtotal', sa.Float(), nullable=False),
+    sa.Column('extras', sa.JSON(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['booking_id'], ['bookings.id'], ),
+    sa.ForeignKeyConstraint(['experience_id'], ['experiences.id'], ),
+    sa.ForeignKeyConstraint(['room_id'], ['rooms.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
     op.create_table('booking_rooms',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('booking_id', sa.Integer(), nullable=False),
@@ -168,23 +209,32 @@ def upgrade():
     sa.ForeignKeyConstraint(['room_id'], ['rooms.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.drop_table('user')
+    op.create_table('email_logs',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('booking_id', sa.Integer(), nullable=False),
+    sa.Column('email_type', sa.String(length=50), nullable=False),
+    sa.Column('recipient_email', sa.String(length=120), nullable=False),
+    sa.Column('subject', sa.String(length=200), nullable=False),
+    sa.Column('status', sa.Enum('PENDING', 'SENT', 'FAILED', name='emailstatus'), nullable=False),
+    sa.Column('error_message', sa.Text(), nullable=True),
+    sa.Column('sent_at', sa.DateTime(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['booking_id'], ['bookings.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
     # ### end Alembic commands ###
 
 
 def downgrade():
     # ### commands auto generated by Alembic - please adjust! ###
-    op.create_table('user',
-    sa.Column('id', sa.INTEGER(), autoincrement=True, nullable=False),
-    sa.Column('email', sa.VARCHAR(length=120), autoincrement=False, nullable=False),
-    sa.Column('password', sa.VARCHAR(), autoincrement=False, nullable=False),
-    sa.Column('is_active', sa.BOOLEAN(), autoincrement=False, nullable=False),
-    sa.PrimaryKeyConstraint('id', name=op.f('user_pkey')),
-    sa.UniqueConstraint('email', name=op.f('user_email_key'), postgresql_include=[], postgresql_nulls_not_distinct=False)
-    )
+    op.drop_table('email_logs')
     op.drop_table('booking_rooms')
+    op.drop_table('booking_items')
     op.drop_table('booking_extras')
     op.drop_table('package_extras')
+    with op.batch_alter_table('bookings', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_bookings_confirmation_number'))
+
     op.drop_table('bookings')
     with op.batch_alter_table('room_availability', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_room_availability_date'))
